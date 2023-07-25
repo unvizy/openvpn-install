@@ -105,9 +105,24 @@ cidr_to_subnetmask() {
     echo "$mask"
 }
 
+list_host() {
+        LST=`tail -n +2 /etc/openvpn/server/easy-rsa/pki/index.txt | grep '^V' | cut -d '=' -f 2`
+        echo "Client Existing:"
+        num=1
+        for a in $LST; do
+                lin=`echo -e $a`
+                ip=`cat /etc/openvpn/server/ccd/$a | awk {'print $2'}`
+                echo "$num: $lin ==>$ip"
+                num=$(($num+1))
+        done
+}
+
 new_client () {
         # Generates the custom client.ovpn
         {
+        local ipClient=$1
+        local subnet=`cat /etc/openvpn/server/server.conf  | grep "^server" | awk {'print $3'}`
+        echo "ifconfig-push $ipClient $subnet" > /etc/openvpn/server/ccd/$client
         cat /etc/openvpn/server/client-common.txt
         echo "<ca>"
         cat /etc/openvpn/server/easy-rsa/pki/ca.crt
@@ -234,11 +249,11 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
         echo "Do you want use tunneling as default gateway?"
         read -p "[Y/N] " confirmDefaultGateway
         echo  
-        echo "Enter a name for the first client:"
-        read -p "Name [client]: " unsanitized_client
-        # Allow a limited set of characters to avoid conflicts
-        client=$(sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$unsanitized_client")
-        [[ -z "$client" ]] && client="client"
+        # echo "Enter a name for the first client:"
+        # read -p "Name [client]: " unsanitized_client
+        # # Allow a limited set of characters to avoid conflicts
+        # client=$(sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$unsanitized_client")
+        # [[ -z "$client" ]] && client="client"
         echo
         echo "OpenVPN installation is ready to begin."
         
@@ -286,7 +301,7 @@ LimitNPROC=infinity" > /etc/systemd/system/openvpn-server@server.service.d/disab
         ./easyrsa --batch init-pki
         ./easyrsa --batch build-ca nopass
         ./easyrsa --batch --days=3650 build-server-full server nopass
-        ./easyrsa --batch --days=3650 build-client-full "$client" nopass
+        # ./easyrsa --batch --days=3650 build-client-full "$client" nopass
         ./easyrsa --batch --days=3650 gen-crl
         # Move the stuff we need
         cp pki/ca.crt pki/private/ca.key pki/issued/server.crt pki/private/server.key pki/crl.pem /etc/openvpn/server
@@ -504,11 +519,11 @@ verb 3" > /etc/openvpn/server/client-common.txt
         # Enable and start the OpenVPN service
         systemctl enable --now openvpn-server@server.service
         # Generates the custom client.ovpn
-        new_client
+        # new_client
         echo
         echo "Finished!"
         echo
-        echo "The client configuration is available in:" ~/openvpn-client/"$client.ovpn"
+        # echo "The client configuration is available in:" ~/openvpn-client/"$client.ovpn"
         echo "New clients can be added by running this script again."
 else
         clear
@@ -527,6 +542,7 @@ else
         case "$option" in
                 1)
                         echo
+                        list_host
                         echo "Provide a name for the client:"
                         read -p "Name: " unsanitized_client
                         client=$(sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$unsanitized_client")
@@ -535,12 +551,14 @@ else
                                 read -p "Name: " unsanitized_client
                                 client=$(sed 's/[^0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-]/_/g' <<< "$unsanitized_client")
                         done
+                        echo "Provide a IP Address for the client:"
+                        read -p "IP Address: " IPClient
                         cd /etc/openvpn/server/easy-rsa/
                         ./easyrsa --batch --days=3650 build-client-full "$client" nopass
                         # Generates the custom client.ovpn
-                        new_client
+                        new_client $IPClient
                         echo
-                        echo "$client added. Configuration available in:" ~/openvpn-client/"$client.ovpn"
+                        echo "$client added. Configuration available in:" /root/openvpn-client/"$client.ovpn"
                         exit
                 ;;
                 2)
@@ -572,6 +590,8 @@ else
                                 ./easyrsa --batch revoke "$client"
                                 ./easyrsa --batch --days=3650 gen-crl
                                 rm -f /etc/openvpn/server/crl.pem
+                                rm /etc/openvpn/server/ccd/$client
+                                rm /root/openvpn-client/$client.ovpn
                                 cp /etc/openvpn/server/easy-rsa/pki/crl.pem /etc/openvpn/server/crl.pem
                                 # CRL is read with each client connection, when OpenVPN is dropped to nobody
                                 chown nobody:"$group_name" /etc/openvpn/server/crl.pem
